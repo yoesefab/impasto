@@ -255,6 +255,17 @@ act() {
     "$@"
 }
 
+# `sudo -v` asks for a password even when the account may run sudo without
+# one, and that prompt needs a terminal. A passwordless sudo is checked
+# with a real command instead, which is what an unattended run has.
+sudo_warm() {
+    if [[ -t 0 ]]; then
+        sudo -v
+    else
+        sudo -n true
+    fi
+}
+
 ask() {
     if (( NOCONFIRM )); then return 0; fi
     local answer
@@ -698,7 +709,7 @@ verb_system() {
     section system
     SUDO=sudo
     if [[ -w ${ROOT:-/} ]]; then SUDO=; fi
-    if [[ -n $SUDO ]] && (( ! DRY )); then sudo -v; fi
+    if [[ -n $SUDO ]] && (( ! DRY )); then sudo_warm; fi
     deploy system "$ROOT" "$STATE/system.manifest" '/'
     # User pictures for the greeter and the lock screen. Never removed.
     act $SUDO install -d -m 755 "$ROOT/var/lib/impasto/faces"

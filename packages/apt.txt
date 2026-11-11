@@ -137,6 +137,7 @@ libpam0g-dev
 sddm
 plymouth
 plymouth-themes
+initramfs-tools
 accountsservice
 
 

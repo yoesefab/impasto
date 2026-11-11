@@ -702,13 +702,57 @@ ubuntu_install_camera() {
 
 # The boot splash. The theme is in system/, the kernel argument is the GRUB
 # drop-in, and Ubuntu rebuilds the initramfs with update-initramfs.
+# Ubuntu 24.04's plymouth package has no plymouth-set-default-theme. The
+# theme name lives in plymouthd.conf, and update-alternatives points
+# default.plymouth at the same files.
+ubuntu_plymouth_current() {
+    local conf=/etc/plymouth/plymouthd.conf
+    if command -v plymouth-set-default-theme >/dev/null; then
+        plymouth-set-default-theme 2>/dev/null || true
+        return 0
+    fi
+    [[ -f $conf ]] || return 0
+    awk -F= '/^[[:space:]]*Theme=/{print $2; exit}' "$conf"
+}
+
+ubuntu_plymouth_set() {
+    local theme=$1 conf=/etc/plymouth/plymouthd.conf
+    if command -v plymouth-set-default-theme >/dev/null; then
+        sudo plymouth-set-default-theme "$theme"
+        return
+    fi
+    sudo mkdir -p /etc/plymouth
+    if [[ -f $conf ]] && grep -q '^[[:space:]]*Theme=' "$conf"; then
+        sudo sed -i "s/^[[:space:]]*Theme=.*/Theme=$theme/" "$conf"
+    elif [[ -f $conf ]]; then
+        printf 'Theme=%s\n' "$theme" | sudo tee -a "$conf" >/dev/null
+    else
+        printf '[Daemon]\nTheme=%s\n' "$theme" | sudo tee "$conf" >/dev/null
+    fi
+    if [[ -f /usr/share/plymouth/themes/$theme/$theme.plymouth ]] \
+        && command -v update-alternatives >/dev/null; then
+        sudo update-alternatives --install \
+            /usr/share/plymouth/themes/default.plymouth default.plymouth \
+            "/usr/share/plymouth/themes/$theme/$theme.plymouth" 150 >/dev/null
+        sudo update-alternatives --set default.plymouth \
+            "/usr/share/plymouth/themes/$theme/$theme.plymouth" >/dev/null
+    fi
+}
+
 verb_splash() {
     local base=${ROOT:-/}
     section 'boot splash'
     if [[ -n ${ROOT:-} ]] && (( ! DRY )); then
         refuse 'the boot splash is set up on the machine itself, not under a prefix' || return
     fi
-    command -v plymouth-set-default-theme >/dev/null || refuse 'plymouth is not installed (package: plymouth)' || return
+    { command -v plymouth >/dev/null || command -v plymouth-set-default-theme >/dev/null; } \
+        || refuse 'plymouth is not installed (package: plymouth)' || return
+    if ! command -v update-initramfs >/dev/null && (( ! DRY )); then
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            -o Dpkg::Options::=--force-confdef \
+            -o Dpkg::Options::=--force-confold \
+            initramfs-tools >/dev/null || true
+    fi
     command -v update-initramfs >/dev/null || refuse 'the initramfs is not built by initramfs-tools (package: initramfs-tools)' || return
     [[ -f $base/usr/share/plymouth/themes/impasto/impasto.plymouth && -f $base/etc/default/grub.d/impasto.cfg ]] \
         || refuse 'the theme is not installed (./setup system)' || return
@@ -716,9 +760,9 @@ verb_splash() {
         say 'would choose the theme, add splash to the kernel command line and rebuild the initramfs with update-initramfs'
         return 0
     fi
-    sudo -v
-    if [[ $(plymouth-set-default-theme) != impasto ]]; then
-        sudo plymouth-set-default-theme impasto || refuse 'the theme could not be chosen' || return
+    sudo_warm
+    if [[ $(ubuntu_plymouth_current) != impasto ]]; then
+        ubuntu_plymouth_set impasto || refuse 'the theme could not be chosen' || return
     fi
     say 'theme    impasto'
     if command -v update-grub >/dev/null; then
@@ -726,6 +770,8 @@ verb_splash() {
     elif command -v grub-mkconfig >/dev/null; then
         sudo grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 \
             || say 'skipped  grub-mkconfig could not add splash'
+    else
+        say 'skipped  update-grub — grub is not installed'
     fi
     sudo update-initramfs -u >/dev/null || refuse 'the initramfs did not rebuild' || return
     say 'rebuilt  the initramfs, with plymouth'
