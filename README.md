@@ -152,9 +152,11 @@ is reported and not replaced. Ubuntu 24.04 and 26.04 do not ship 0.56 in the
 archive, so the installer enables `ppa:cppiber/hyprland` for Hyprland and the
 small tools that PPA carries (the portal, the picker, sunset, satty, swww).
 A later Ubuntu whose own package is already 0.56 or newer is used as it is,
-and the PPA is not asked for Hyprland. Quickshell has to be 0.3 or newer and
-built against the system Qt: a repository build that is older is not
-installed, and 0.3 is built from source into `/usr/local` instead. Programs
+and the PPA is not asked for Hyprland. Quickshell has to be 0.3 or newer.
+A repository build that is older is not installed. When apt has no 0.3,
+it is built from source into `/usr/local`. Quickshell 0.3 needs Qt 6.6, and
+Ubuntu 24.04 ships 6.4, so that build downloads Qt 6.6 and links against it.
+A newer Ubuntu whose own Qt is already 6.6 or newer uses the system Qt. Programs
 that are not in the Ubuntu repositories (Zen, Vesktop, VSCodium, Spotify,
 spicetify, quickemu) are skipped, with the reason, and the rest of the desk
 still installs. The boot splash uses Plymouth, GRUB and `update-initramfs`.

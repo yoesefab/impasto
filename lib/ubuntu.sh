@@ -155,12 +155,18 @@ ubuntu_apt_install() {
         say "would install ${pkgs[*]}"
         return 0
     fi
-    if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${pkgs[@]}"; then
+    if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            -o Dpkg::Options::=--force-confdef \
+            -o Dpkg::Options::=--force-confold \
+            "${pkgs[@]}"; then
         return 0
     fi
     for pkg in "${pkgs[@]}"; do
         apt_has "$pkg" && continue
-        if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"; then
+        if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                -o Dpkg::Options::=--force-confdef \
+                -o Dpkg::Options::=--force-confold \
+                "$pkg"; then
             :
         else
             say "skipped  $pkg — apt would not take it"
@@ -244,7 +250,10 @@ ubuntu_hyprland() {
             HYPRLAND_KEEP=1
             return 0
         fi
-        if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y hyprland; then
+        if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                -o Dpkg::Options::=--force-confdef \
+                -o Dpkg::Options::=--force-confold \
+                hyprland; then
             HYPRLAND_KEEP=1
             say "installed hyprland $(apt_upstream "$cand")"
         fi
@@ -306,7 +315,10 @@ ubuntu_ppa() {
             say "skipped  hyprland $cand — Impasto needs 0.56 or newer"
             continue
         fi
-        if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"; then
+        if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                -o Dpkg::Options::=--force-confdef \
+                -o Dpkg::Options::=--force-confold \
+                "$pkg"; then
             say "installed $pkg from $HYPRLAND_PPA"
             [[ $pkg == hyprland ]] && HYPRLAND_KEEP=1
         else
@@ -315,8 +327,55 @@ ubuntu_ppa() {
     done
 }
 
+# Qt6Core's version, or nothing when the development package is absent.
+qt_version() {
+    local ver=
+    if command -v pkg-config >/dev/null; then
+        ver=$(pkg-config --modversion Qt6Core 2>/dev/null || true)
+    fi
+    if [[ -z $ver ]] && command -v qmake6 >/dev/null; then
+        ver=$(qmake6 -query QT_VERSION 2>/dev/null || true)
+    fi
+    [[ -n $ver ]] || return 1
+    printf '%s' "$ver"
+}
+
+# Quickshell 0.3 needs Qt 6.6. Ubuntu 24.04 ships 6.4, so the build uses a
+# private Qt 6.6 from the official Qt releases when the system copy is older.
+# Prints the prefix cmake should be pointed at, or nothing to use the system Qt.
+ubuntu_qt_for_quickshell() {
+    local ver prefix=$STATE/qt/6.6.3/gcc_64
+    ver=$(qt_version || true)
+    if [[ -n $ver ]] && version_at_least "$ver" 6.6; then
+        return 0
+    fi
+    if [[ -n $ver ]]; then
+        say "Qt $ver is older than 6.6 — quickshell 0.3 needs a newer Qt"
+    else
+        say 'Qt 6 development files are not installed — quickshell 0.3 needs Qt 6.6'
+    fi
+    if (( DRY )); then
+        printf '%s' "$prefix"
+        return 0
+    fi
+    if [[ ! -x $prefix/bin/qmake ]]; then
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            -o Dpkg::Options::=--force-confdef \
+            -o Dpkg::Options::=--force-confold \
+            python3-venv python3-pip || return 1
+        python3 -m venv "$STATE/aqt" || return 1
+        "$STATE/aqt/bin/pip" install -q 'aqtinstall==3.1.18' || return 1
+        "$STATE/aqt/bin/aqt" install-qt linux desktop 6.6.3 linux_gcc_64 \
+            -O "$STATE/qt" -m qtshadertools qtsvg qtwayland qtimageformats \
+            || return 1
+    fi
+    [[ -x $prefix/bin/qmake ]] || return 1
+    printf '%s' "$prefix"
+}
+
 ubuntu_quickshell() {
-    local ver tag src cand
+    local ver tag src cand qt_prefix
+    local -a cmake_qt=()
     ver=$(quickshell_version || true)
     if [[ -n $ver ]] && version_at_least "$ver" 0.3; then
         say "kept     quickshell $ver"
@@ -328,25 +387,31 @@ ubuntu_quickshell() {
             say "would install quickshell $(apt_upstream "$cand")"
             return 0
         fi
-        if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y quickshell; then
+        if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                -o Dpkg::Options::=--force-confdef \
+                -o Dpkg::Options::=--force-confold \
+                quickshell; then
             say "installed quickshell $(apt_upstream "$cand")"
             return 0
         fi
     fi
-    ver=$(quickshell_version || true)
-    if [[ -n $ver ]]; then
-        say "quickshell $ver is older than 0.3 — building 0.3 against this system's Qt"
-    else
-        say 'quickshell is not installed — building 0.3 against this system'"'"'s Qt'
-    fi
     if (( DRY )); then
+        ubuntu_qt_for_quickshell >/dev/null || true
         say 'would build quickshell from source into /usr/local'
+        return 0
+    fi
+    say 'quickshell is not installed — building 0.3'
+    if ! qt_prefix=$(ubuntu_qt_for_quickshell); then
+        say 'skipped  quickshell — Qt 6.6 could not be installed'
         return 0
     fi
     local -a deps=(cmake ninja-build g++ git qt6-base-dev qt6-declarative-dev
         qt6-wayland-dev qt6-svg-dev libwayland-dev wayland-protocols
-        libgl-dev libjemalloc-dev libunwind-dev libpam0g-dev pkgconf)
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${deps[@]}" || {
+        libgl-dev libjemalloc-dev libunwind-dev libpam0g-dev pkgconf libdrm-dev)
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        -o Dpkg::Options::=--force-confdef \
+        -o Dpkg::Options::=--force-confold \
+        "${deps[@]}" || {
         say 'skipped  quickshell build dependencies are not available'
         return 0
     }
@@ -359,10 +424,20 @@ ubuntu_quickshell() {
         say 'skipped  quickshell could not be cloned'
         return 0
     fi
-    if cmake -S "$src" -B "$src/build" -G Ninja \
+    if [[ -n $qt_prefix ]]; then
+        cmake_qt=(
+            -DCMAKE_PREFIX_PATH="$qt_prefix"
+            -DCMAKE_INSTALL_RPATH="$qt_prefix/lib"
+            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
+        )
+        say "building  quickshell against Qt at $qt_prefix"
+    fi
+    # /usr/bin/c++ may be clang, which does not see gcc's libstdc++ here.
+    if CC=gcc CXX=g++ cmake -S "$src" -B "$src/build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr/local \
             -DVENDOR_CPPTRACE=ON \
+            "${cmake_qt[@]}" \
         && cmake --build "$src/build" \
         && sudo cmake --install "$src/build"; then
         say "built    quickshell $tag"
@@ -393,13 +468,16 @@ ubuntu_wallpaper() {
         return 0
     fi
     if ! command -v cargo >/dev/null; then
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cargo rustc pkg-config libwayland-dev >/dev/null \
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            -o Dpkg::Options::=--force-confdef \
+            -o Dpkg::Options::=--force-confold \
+            cargo rustc pkg-config libwayland-dev >/dev/null \
             || { say 'skipped  awww — cargo is not installed'; return 0; }
     fi
-    src=$STATE/src/awww
+    src=$STATE/src/swww
     rm -rf "$src"
-    if ! git clone -q --depth=1 https://github.com/LGFae/awww "$src"; then
-        say 'skipped  awww could not be cloned'
+    if ! git clone -q --depth=1 https://github.com/LGFae/swww "$src"; then
+        say 'skipped  swww could not be cloned'
         return 0
     fi
     if ! (cd "$src" && cargo build --release); then
@@ -459,9 +537,18 @@ ubuntu_starship() {
         return 0
     fi
     command -v curl >/dev/null || { say 'skipped  starship — curl is not installed'; return 0; }
-    if curl -fsSL https://starship.rs/install.sh | sh -s -- -y; then
+    # The installer is saved first. Piped into sh, its own sudo would read
+    # the script instead of a password and wait forever.
+    local script=$STATE/src/starship-install.sh bin
+    mkdir -p "$STATE/src"
+    bin=$(mktemp -d)
+    if curl -fsSL https://starship.rs/install.sh -o "$script" \
+        && sh "$script" -y -b "$bin" </dev/null \
+        && sudo install -m 755 "$bin/starship" /usr/local/bin/starship; then
+        rm -rf "$bin"
         say 'installed starship'
     else
+        rm -rf "$bin"
         say 'skipped  starship — not in the Ubuntu repositories'
     fi
 }
@@ -582,10 +669,16 @@ ubuntu_install_camera() {
         say 'would install MediaPipe with pip when apt has no python3-mediapipe'
         return 0
     fi
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${pkgs[@]}" || return 1
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        -o Dpkg::Options::=--force-confdef \
+        -o Dpkg::Options::=--force-confold \
+        "${pkgs[@]}" || return 1
     if ! python3 -c 'import mediapipe' 2>/dev/null; then
         if apt_candidate python3-mediapipe >/dev/null; then
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-mediapipe || return 1
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                -o Dpkg::Options::=--force-confdef \
+                -o Dpkg::Options::=--force-confold \
+                python3-mediapipe || return 1
         elif python3 -m pip --version >/dev/null 2>&1; then
             python3 -m pip install --user mediapipe || return 1
         else

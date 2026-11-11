@@ -1263,7 +1263,10 @@ verb_face() {
         if apt_candidate howdy >/dev/null; then
             if (( DRY )); then
                 say 'would install howdy'
-            elif ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y howdy; then
+            elif ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                    -o Dpkg::Options::=--force-confdef \
+                    -o Dpkg::Options::=--force-confold \
+                    howdy; then
                 refuse 'howdy was not installed' || return
             fi
         else
