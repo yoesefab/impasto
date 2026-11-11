@@ -350,9 +350,9 @@ ubuntu_qt_for_quickshell() {
         return 0
     fi
     if [[ -n $ver ]]; then
-        say "Qt $ver is older than 6.6 — quickshell 0.3 needs a newer Qt"
+        say "Qt $ver is older than 6.6 — quickshell 0.3 needs a newer Qt" >&2
     else
-        say 'Qt 6 development files are not installed — quickshell 0.3 needs Qt 6.6'
+        say 'Qt 6 development files are not installed — quickshell 0.3 needs Qt 6.6' >&2
     fi
     if (( DRY )); then
         printf '%s' "$prefix"
@@ -365,8 +365,10 @@ ubuntu_qt_for_quickshell() {
             python3-venv python3-pip || return 1
         python3 -m venv "$STATE/aqt" || return 1
         "$STATE/aqt/bin/pip" install -q 'aqtinstall==3.1.18' || return 1
-        "$STATE/aqt/bin/aqt" install-qt linux desktop 6.6.3 linux_gcc_64 \
-            -O "$STATE/qt" -m qtshadertools qtsvg qtwayland qtimageformats \
+        # aqt's arch name is gcc_64. QtSvg and Qt Wayland ship in the base
+        # archive for 6.6; shader tools and image formats are extra modules.
+        "$STATE/aqt/bin/aqt" install-qt linux desktop 6.6.3 gcc_64 \
+            -O "$STATE/qt" -m qtshadertools qtimageformats \
             || return 1
     fi
     [[ -x $prefix/bin/qmake ]] || return 1
@@ -476,7 +478,9 @@ ubuntu_wallpaper() {
     fi
     src=$STATE/src/swww
     rm -rf "$src"
-    if ! git clone -q --depth=1 https://github.com/LGFae/swww "$src"; then
+    # Current swww needs Rust 1.89. v0.9.5 is the newest tag that builds with
+    # the Rust toolchain Ubuntu 24.04 provides.
+    if ! git clone -q --depth=1 --branch v0.9.5 https://github.com/LGFae/swww "$src"; then
         say 'skipped  swww could not be cloned'
         return 0
     fi
