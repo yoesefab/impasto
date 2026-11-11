@@ -409,8 +409,9 @@ ubuntu_quickshell() {
     fi
     local -a deps=(cmake ninja-build g++ git qt6-base-dev qt6-declarative-dev
         qt6-wayland-dev qt6-svg-dev libwayland-dev wayland-protocols
-        libgl-dev libjemalloc-dev libunwind-dev libpam0g-dev pkgconf libdrm-dev
-        libcli11-dev libxkbcommon-dev)
+        libgl-dev libegl-dev libjemalloc-dev libunwind-dev libpam0g-dev pkgconf
+        libdrm-dev libcli11-dev libxkbcommon-dev libpipewire-0.3-dev
+        libglib2.0-dev libpolkit-agent-1-dev libpolkit-gobject-1-dev libxcb1-dev)
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
         -o Dpkg::Options::=--force-confdef \
         -o Dpkg::Options::=--force-confold \
