@@ -409,7 +409,8 @@ ubuntu_quickshell() {
     fi
     local -a deps=(cmake ninja-build g++ git qt6-base-dev qt6-declarative-dev
         qt6-wayland-dev qt6-svg-dev libwayland-dev wayland-protocols
-        libgl-dev libjemalloc-dev libunwind-dev libpam0g-dev pkgconf libdrm-dev)
+        libgl-dev libjemalloc-dev libunwind-dev libpam0g-dev pkgconf libdrm-dev
+        libcli11-dev libxkbcommon-dev)
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
         -o Dpkg::Options::=--force-confdef \
         -o Dpkg::Options::=--force-confold \
@@ -426,14 +427,21 @@ ubuntu_quickshell() {
         say 'skipped  quickshell could not be cloned'
         return 0
     fi
+    local qml_dir=
     if [[ -n $qt_prefix ]]; then
+        qml_dir=$qt_prefix/qml
         cmake_qt=(
             -DCMAKE_PREFIX_PATH="$qt_prefix"
             -DCMAKE_INSTALL_RPATH="$qt_prefix/lib"
             -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
         )
         say "building  quickshell against Qt at $qt_prefix"
+    elif command -v qmake6 >/dev/null; then
+        qml_dir=$(qmake6 -query QT_INSTALL_QML 2>/dev/null || true)
     fi
+    # Without this, the build warns and installs no QML modules, so qs starts
+    # with an empty import path.
+    [[ -n $qml_dir ]] && cmake_qt+=(-DINSTALL_QMLDIR="$qml_dir")
     # /usr/bin/c++ may be clang, which does not see gcc's libstdc++ here.
     if CC=gcc CXX=g++ cmake -S "$src" -B "$src/build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
