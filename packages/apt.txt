@@ -1,0 +1,185 @@
+# ╭──────────────────────────────────────────────────────────────────────────╮
+# │                                                                          │
+# │   A P T                                                                  │
+# │   packages from the Ubuntu repositories                                  │
+# │                                                                          │
+# │   github.com/andreumassanet/impasto                                      │
+# │                                                                          │
+# ╰──────────────────────────────────────────────────────────────────────────╯
+
+# · `./setup packages` on Ubuntu installs whatever is missing with
+# · `apt-get install`. `#` starts a comment anywhere on a line. A line
+# · that starts with `?` is optional: it is installed when the
+# · repositories have it, and its absence is not a failure. Hyprland,
+# · Quickshell and the wallpaper daemon are handled by name in `./setup`,
+# · because Ubuntu 24.04 does not ship a new enough build of those.
+
+
+# ── DESKTOP ─────────────────────────────────────────────────────────────────
+
+python3
+git
+curl
+imagemagick                  # magick, or convert on ImageMagick 6
+grim
+dbus
+wl-clipboard
+libgtk-3-bin                 # gtk-launch
+libnotify-bin
+fontconfig
+pipewire
+wireplumber
+playerctl
+xdg-desktop-portal-gtk
+xdg-user-dirs
+xdg-utils
+qt6ct
+papirus-icon-theme
+fonts-inter
+fonts-jetbrains-mono
+fonts-noto-core
+fonts-noto-color-emoji
+fonts-noto-cjk
+unicode-data                 # emoji-test.txt, for the launcher
+iso-codes
+
+
+# ── TERMINAL ────────────────────────────────────────────────────────────────
+
+kitty
+zsh
+less
+
+
+# ── QUICK CONTROLS ──────────────────────────────────────────────────────────
+
+brightnessctl
+ddcutil
+i2c-tools                    # the i2c group, for an external monitor
+network-manager
+bluez
+power-profiles-daemon
+upower
+
+
+# ── CAPTURE ─────────────────────────────────────────────────────────────────
+
+tesseract-ocr
+tesseract-ocr-eng
+wf-recorder
+pulseaudio-utils             # pactl
+pipewire-pulse
+
+
+# ── TERMINAL PROGRAMS ───────────────────────────────────────────────────────
+
+fzf
+zoxide
+btop
+cava
+imv
+mpv
+ffmpeg
+
+
+# ── EDITOR ──────────────────────────────────────────────────────────────────
+
+neovim
+tree-sitter-cli
+ripgrep
+fd-find                      # the binary is fdfind
+qt6-declarative-dev          # qmlls, when the package ships it
+
+
+# ── FILE MANAGER ────────────────────────────────────────────────────────────
+
+nautilus
+python3-nautilus
+ffmpegthumbnailer
+gvfs
+
+
+# ── QT ──────────────────────────────────────────────────────────────────────
+
+polkit-kde-agent-1
+qt6-wayland
+qml6-module-qtmultimedia
+libqt6multimedia6
+
+
+# ── BUILD ───────────────────────────────────────────────────────────────────
+# · Quickshell is built from source when apt has no 0.3, and hyprpm builds
+# · the plugins. These are the compilers and the Qt it links.
+
+cmake
+meson
+cpio
+g++
+make
+ninja-build
+pkgconf
+pkg-config
+build-essential
+software-properties-common  # add-apt-repository, for the Hyprland PPA
+qt6-base-dev
+qt6-wayland-dev
+qt6-svg-dev
+libwayland-dev
+wayland-protocols
+libgl-dev
+libjemalloc-dev
+libunwind-dev
+libpam0g-dev
+
+
+# ── LOGIN SCREEN ────────────────────────────────────────────────────────────
+
+sddm
+plymouth
+plymouth-themes
+accountsservice
+
+
+# ── FACE UNLOCK ─────────────────────────────────────────────────────────────
+
+v4l-utils
+
+
+# ── VIRTUAL MACHINES ────────────────────────────────────────────────────────
+
+qemu-system-x86
+
+
+# ── DEVELOPMENT ─────────────────────────────────────────────────────────────
+
+lua5.4
+inotify-tools
+tar
+
+
+# ── OPTIONAL ────────────────────────────────────────────────────────────────
+# · Present on some Ubuntu releases and not others. The installer asks the
+# · repositories and moves on. Hyprland 0.56 on 24.04 and 26.04 comes from
+# · ppa:cppiber/hyprland, which ./setup enables only for what is still missing.
+
+? hyprland
+? hyprland-dev
+? xdg-desktop-portal-hyprland
+? hyprpicker
+? hyprsunset
+? hyprcursor
+? hyprpm
+? satty
+? swww
+? awww
+? quickshell
+? starship
+? yazi
+? mpvpaper
+? wl-screenrec
+? fnm
+? lua-language-server
+? fastfetch
+? ruff
+? bash-language-server
+? howdy
