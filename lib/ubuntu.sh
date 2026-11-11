@@ -359,17 +359,17 @@ ubuntu_qt_for_quickshell() {
         return 0
     fi
     if [[ ! -x $prefix/bin/qmake ]]; then
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            -o Dpkg::Options::=--force-confdef \
-            -o Dpkg::Options::=--force-confold \
-            python3-venv python3-pip || return 1
-        python3 -m venv "$STATE/aqt" || return 1
-        "$STATE/aqt/bin/pip" install -q 'aqtinstall==3.1.18' || return 1
-        # aqt's arch name is gcc_64. QtSvg and Qt Wayland ship in the base
-        # archive for 6.6; shader tools and image formats are extra modules.
-        "$STATE/aqt/bin/aqt" install-qt linux desktop 6.6.3 gcc_64 \
-            -O "$STATE/qt" -m qtshadertools qtimageformats \
-            || return 1
+        # This function's stdout is only the prefix. Installers talk on stderr.
+        {
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                -o Dpkg::Options::=--force-confdef \
+                -o Dpkg::Options::=--force-confold \
+                python3-venv python3-pip \
+            && python3 -m venv "$STATE/aqt" \
+            && "$STATE/aqt/bin/pip" install -q 'aqtinstall==3.1.18' \
+            && "$STATE/aqt/bin/aqt" install-qt linux desktop 6.6.3 gcc_64 \
+                -O "$STATE/qt" -m qtshadertools qtimageformats
+        } >&2 || return 1
     fi
     [[ -x $prefix/bin/qmake ]] || return 1
     printf '%s' "$prefix"
@@ -469,13 +469,12 @@ ubuntu_wallpaper() {
         say 'would build awww from source into /usr/local'
         return 0
     fi
-    if ! command -v cargo >/dev/null; then
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            -o Dpkg::Options::=--force-confdef \
-            -o Dpkg::Options::=--force-confold \
-            cargo rustc pkg-config libwayland-dev >/dev/null \
-            || { say 'skipped  awww — cargo is not installed'; return 0; }
-    fi
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        -o Dpkg::Options::=--force-confdef \
+        -o Dpkg::Options::=--force-confold \
+        cargo rustc pkg-config libwayland-dev libwayland-bin wayland-protocols \
+        liblz4-dev libxkbcommon-dev >/dev/null \
+        || { say 'skipped  awww — its build dependencies are not installed'; return 0; }
     src=$STATE/src/swww
     rm -rf "$src"
     # Current swww needs Rust 1.89. v0.9.5 is the newest tag that builds with
