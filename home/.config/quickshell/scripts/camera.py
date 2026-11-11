@@ -57,8 +57,9 @@ PIDFILE = RUNTIME / "serve.pid"
 SNAP = RUNTIME / "snap.request"
 MODELS = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "impasto/camera"
 def emoji_font_path():
-    """A colour emoji font, Arch's path first and Fedora's after it."""
+    """A colour emoji font, Ubuntu's path first."""
     candidates = [
+        "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
         "/usr/share/fonts/noto/NotoColorEmoji.ttf",
         "/usr/share/fonts/google-noto-color-emoji-fonts/NotoColorEmoji.ttf",
         "/usr/share/fonts/google-noto-color-emoji-fonts/Noto-COLRv1.ttf",

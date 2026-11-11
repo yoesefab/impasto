@@ -13,12 +13,14 @@
 -- Each server is enabled only if its binary is installed; otherwise neovim
 -- reports a spawn failure on every file of that type.
 
--- · `cmd` only where the binary name differs: Arch ships qmlls as `qmlls6`.
+-- · `cmd` only where the binary name differs: Ubuntu's Qt package ships
+--   `qmlls`; some builds name it `qmlls6`. Prefer qmlls6 when it exists.
+local qml_binary = vim.fn.executable("qmlls6") == 1 and "qmlls6" or "qmlls"
 local servers = {
     { name = "lua_ls",       binary = "lua-language-server" },
     { name = "ruff",         binary = "ruff" },
     { name = "bashls",       binary = "bash-language-server" },
-    { name = "qmlls",        binary = "qmlls6", cmd = { "qmlls6" } },
+    { name = "qmlls",        binary = qml_binary, cmd = { qml_binary } },
 }
 
 -- · one Python type checker, whichever is installed (basedpyright preferred)
