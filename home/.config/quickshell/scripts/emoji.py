@@ -36,10 +36,8 @@ def first_existing(candidates):
     return candidates[0]
 
 
-# Arch and Fedora ship emoji-test.txt on the same path. The annotation
-# directory is the same too when cldr-emoji-annotation (Fedora) or
-# unicode-cldr-annotations (Arch) is installed; the other candidates cover
-# a layout that puts the files one directory up.
+# Ubuntu ships emoji-test.txt from the unicode-data package and colour emoji
+# from fonts-noto-color-emoji. CLDR annotations may be absent.
 SOURCE = first_existing([
     "/usr/share/unicode/emoji/emoji-test.txt",
     "/usr/share/unicode/ucd/emoji/emoji-test.txt",

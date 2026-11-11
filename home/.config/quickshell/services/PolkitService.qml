@@ -39,11 +39,15 @@ Singleton {
     signal settled()
 
     // Arch installs the agent under /usr/lib. Fedora's kf6 package installs
-    // it under /usr/libexec/kf6. The first one that is executable wins.
+    // it under /usr/libexec/kf6. Ubuntu installs polkit-kde-agent-1 under
+    // /usr/libexec and the multiarch libexec dir. The first one that is
+    // executable wins.
     readonly property var fallbacks: [
         "/usr/lib/polkit-kde-authentication-agent-1",
         "/usr/libexec/kf6/polkit-kde-authentication-agent-1",
-        "/usr/libexec/polkit-kde-authentication-agent-1"
+        "/usr/libexec/polkit-kde-authentication-agent-1",
+        "/usr/lib/x86_64-linux-gnu/libexec/polkit-kde-authentication-agent-1",
+        "/usr/lib/aarch64-linux-gnu/libexec/polkit-kde-authentication-agent-1"
     ]
     readonly property int tries: 3
     property int tried: 0

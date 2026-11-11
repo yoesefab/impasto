@@ -9,9 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/andreumassanet/impasto/actions/workflows/check.yml"><img src="https://github.com/andreumassanet/impasto/actions/workflows/check.yml/badge.svg" alt="check"></a>
-  <img src="https://img.shields.io/badge/Arch_Linux-1793d1?style=flat-square&logo=archlinux&logoColor=white" alt="Arch Linux">
-  <img src="https://img.shields.io/badge/Fedora-51a2da?style=flat-square&logo=fedora&logoColor=white" alt="Fedora">
+  <a href="https://github.com/yoesefab/impasto/actions/workflows/check.yml"><img src="https://github.com/yoesefab/impasto/actions/workflows/check.yml/badge.svg" alt="check"></a>
+  <img src="https://img.shields.io/badge/Ubuntu-E95420?style=flat-square&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/Hyprland-Lua_config-58e1ff?style=flat-square&logo=hyprland&logoColor=white" alt="Hyprland">
   <img src="https://img.shields.io/badge/Quickshell-0.3-000000?style=flat-square" alt="Quickshell">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-2e509e?style=flat-square" alt="GPL-3.0"></a>
@@ -134,28 +133,33 @@ screen and the boot splash are the same design, before there is a session.
 
 ## Installation
 
-Arch Linux or Fedora 43 or newer, and Hyprland 0.56 or newer, from a terminal
+Ubuntu 24.04 LTS or newer, and Hyprland 0.56 or newer, from a terminal
 or a console:
 
 ```bash
-git clone https://github.com/andreumassanet/impasto.git ~/impasto
+git clone https://github.com/yoesefab/impasto.git ~/impasto
 cd ~/impasto
 ./setup install
 ```
 
-`./setup` reads `/etc/os-release` and installs with pacman on Arch or dnf on
-Fedora. It copies `home/` and `system/` into place, and sets up the login
-screen, the plugins and the programs around the shell. Run `./setup` alone to
-pick from a menu instead.
+`./setup` reads `/etc/os-release` and installs with apt. It only accepts
+Ubuntu (`ID=ubuntu`). It copies `home/` and `system/` into place, and sets up
+the login screen, the plugins and the programs around the shell. Run
+`./setup` alone to pick from a menu instead.
 
-On Fedora, a Hyprland that is already installed is left as it is. One older
-than 0.56 is reported and not replaced. Quickshell has to be 0.3 or newer and
-built against the system Qt: a repository build that is older, or a COPR
-build that would downgrade Qt, is not installed, and 0.3 is built from source
-into `/usr/local` instead. Programs that are not in the Fedora repositories
-(Zen, Vesktop, VSCodium, Spotify, spicetify, quickemu) are skipped, with the
-reason, and the rest of the desk still installs. The boot splash uses dracut,
-not mkinitcpio.
+A Hyprland that is already installed is left as it is. One older than 0.56
+is reported and not replaced. Ubuntu 24.04 and 26.04 do not ship 0.56 in the
+archive, so the installer enables `ppa:cppiber/hyprland` for Hyprland and the
+small tools that PPA carries (the portal, the picker, sunset, satty, swww).
+A later Ubuntu whose own package is already 0.56 or newer is used as it is,
+and the PPA is not asked for Hyprland. Quickshell has to be 0.3 or newer.
+A repository build that is older is not installed. When apt has no 0.3,
+it is built from source into `/usr/local`. Quickshell 0.3 needs Qt 6.6, and
+Ubuntu 24.04 ships 6.4, so that build downloads Qt 6.6 and links against it.
+A newer Ubuntu whose own Qt is already 6.6 or newer uses the system Qt. Programs
+that are not in the Ubuntu repositories (Zen, Vesktop, VSCodium, Spotify,
+spicetify, quickemu) are skipped, with the reason, and the rest of the desk
+still installs. The boot splash uses Plymouth, GRUB and `update-initramfs`.
 
 <details>
 <summary><b>Flags</b></summary>
@@ -167,7 +171,6 @@ not mkinitcpio.
 | `--skip-system` | leave `/` alone — no login screen, and no password for it |
 | `--skip-plugins` | no shake to find, no glass |
 | `--skip-extras` | leave Nautilus, VSCodium, Vesktop, Spotify, GTK, face unlock, the camera and the boot splash alone |
-| `--aur-helper yay\|paru` | Arch: which helper builds the AUR half — built from the AUR if you have neither. Fedora does not use it |
 | `--noconfirm` | take the default at every question |
 | `-n`, `--dry-run` | say what would happen, and do none of it |
 
@@ -263,10 +266,10 @@ and [Rosé Pine](https://rosepinetheme.com).
 
 ## Star history
 
-<a href="https://star-history.com/#andreumassanet/impasto&Date">
+<a href="https://star-history.com/#yoesefab/impasto&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=andreumassanet/impasto&type=Date&theme=dark">
-    <img src="https://api.star-history.com/svg?repos=andreumassanet/impasto&type=Date" alt="Star history of impasto" width="100%">
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=yoesefab/impasto&type=Date&theme=dark">
+    <img src="https://api.star-history.com/svg?repos=yoesefab/impasto&type=Date" alt="Star history of impasto" width="100%">
   </picture>
 </a>
 

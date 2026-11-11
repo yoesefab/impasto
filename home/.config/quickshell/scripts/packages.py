@@ -2,90 +2,70 @@
 # ╭──────────────────────────────────────────────────────────────────────────╮
 # │                                                                          │
 # │   P A C K A G E S                                                        │
-# │   package queries · pacman and the aur, read only                        │
+# │   package queries · apt, read only                                       │
 # │                                                                          │
 # │   github.com/andreumassanet/impasto                                      │
 # │                                                                          │
 # ╰──────────────────────────────────────────────────────────────────────────╯
 
-"""Read the package database and search the repositories and the AUR.
+"""Read installed packages and search the Ubuntu repositories.
 
-    installed        every installed package, with its description, install
-                     reason and whether it is foreign, plus the AUR helper
-    search TERM      packages whose name contains TERM, from the sync
-                     databases and the AUR, ranked exact, prefix, substring
+    installed        every installed package, with its summary, whether it
+                     was marked manual, and whether it is outside the
+                     Ubuntu archive
+    search TERM      packages whose name contains TERM, ranked exact,
+                     prefix, then name
 
-Read-only: installing and upgrading run in a terminal, where pacman can ask
-for a password and confirmation. The AUR is searched over its RPC; a term the
-RPC rejects as too broad is retried as a prefix through `suggest`. Offline,
-the AUR part is null and the repositories still answer.
+Read-only: installing and upgrading run in a terminal, where apt can ask
+for a password and confirmation.
 """
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
-import threading
-import urllib.parse
-import urllib.request
 
-AUR_RPC = "https://aur.archlinux.org/rpc/v5"
-AUR_TIMEOUT = 8
-
-# Maximum rows returned by a search.
+# Rows whose version and summary are filled in. The rest of a long search
+# is counted, not shown.
 LISTED = 160
 
-# Supported AUR helpers, in order of preference. `setup` builds yay-bin when
-# neither is installed.
-HELPERS = ("yay", "paru")
+LISTS = "/var/lib/apt/lists"
 
 ENV = dict(os.environ, LANG="C", LC_ALL="C")
 
-# Repositories that count as the distribution itself. Anything else installed
-# on Fedora (a COPR, a local build) is the foreign set the panel calls "aur".
-FEDORA_REPOS = {
-    "fedora", "updates", "updates-testing", "fedora-cisco-openh264",
-    "anaconda", "@System",
-}
+# apt-cache search compiles the term as a POSIX extended regular expression.
+_PATTERN_META = set(".^$*+?()[]{}|\\")
+
+_LZ4 = None
 
 
 def family():
-    """arch, fedora, or "" when os-release does not say."""
+    """ubuntu when os-release says ID=ubuntu, otherwise ""."""
     path = os.environ.get("IMPASTO_OS_RELEASE", "/etc/os-release")
     try:
         with open(path, encoding="utf-8") as handle:
             text = handle.read()
     except OSError:
         return ""
-    ident = like = ""
     for line in text.splitlines():
         key, _, value = line.partition("=")
-        value = value.strip().strip('"')
-        if key == "ID":
-            ident = value
-        elif key == "ID_LIKE":
-            like = value
-    if ident in {"arch", "artix", "manjaro", "endeavouros", "cachyos"} or "arch" in like.split():
-        return "arch"
-    if ident == "fedora" or "fedora" in like.split():
-        return "fedora"
+        if key.strip() != "ID":
+            continue
+        ident = value.strip().strip('"').strip("'")
+        return "ubuntu" if ident == "ubuntu" else ""
     return ""
 
 
 def manager():
-    """Which package database this machine answers with."""
-    distro = family()
-    if distro == "fedora" or (distro != "arch" and shutil.which("dnf") and not shutil.which("pacman")):
-        return "dnf"
-    if shutil.which("pacman") or distro == "arch":
-        return "pacman"
+    """apt on Ubuntu, or wherever apt-get and dpkg-query are both installed."""
+    if family() == "ubuntu" or (shutil.which("apt-get") and shutil.which("dpkg-query")):
+        return "apt"
     return ""
 
 
 def human_size(raw):
-    """Bytes, as pacman writes a size: '1.50 MiB'."""
+    """Bytes, written as '1.50 MiB'."""
     try:
         size = float(raw)
     except (TypeError, ValueError):
@@ -98,327 +78,379 @@ def human_size(raw):
     return f"{size:.2f} {units[index]}"
 
 
-def dnf_text(commands):
-    """Stdout of the first command that exits 0, or None."""
-    for command in commands:
-        result = run(command)
-        if result is not None and result.returncode == 0:
-            return result.stdout
-    return None
+def parse_apt_installed(text, explicit, foreign_names):
+    """Rows from `name\\tversion\\tsummary\\tsize_kb`.
 
-
-def dnf_userinstalled():
-    text = dnf_text([
-        ["dnf", "repoquery", "--userinstalled", "--format", "%{name}"],
-        ["dnf", "repoquery", "--userinstalled", "--qf", "%{name}"],
-    ])
-    if text is None:
-        return None
-    return {line.strip() for line in text.splitlines() if line.strip() and " " not in line.strip()}
-
-
-def dnf_foreign():
-    text = dnf_text([
-        ["dnf", "repoquery", "--installed", "--format", "%{name}\t%{repoid}"],
-        ["dnf", "repoquery", "--installed", "--qf", "%{name}\t%{repoid}"],
-    ])
-    if text is None:
-        return set()
-    names = set()
-    for line in text.splitlines():
-        name, _, repo = line.strip().partition("\t")
-        if not name or not repo or " " in name:
-            continue
-        base = repo.split(":", 1)[0]
-        if base not in FEDORA_REPOS and not base.startswith("fedora"):
-            names.add(name)
-    return names
-
-
-def parse_rpm_installed(text, explicit, foreign_names):
-    """Rows for `rpm -qa --qf` with name, version, summary and size in bytes."""
+    Installed-Size is kilobytes. `explicit` is None when every package
+    counts as manual. `foreign_names` are the ones the panel flags.
+    """
     packages = []
     for line in text.splitlines():
-        parts = line.split("\t")
-        if len(parts) < 2 or not parts[0].strip():
+        if not line.strip():
             continue
+        parts = line.split("\t")
         name = parts[0].strip()
+        if not name:
+            continue
+        version = parts[1].strip() if len(parts) > 1 else ""
+        description = parts[2].strip() if len(parts) > 2 else ""
+        size = ""
+        if len(parts) > 3 and parts[3].strip():
+            try:
+                size = human_size(float(parts[3].strip()) * 1024)
+            except (TypeError, ValueError):
+                size = ""
         packages.append({
             "name": name,
-            "version": parts[1].strip(),
-            "description": parts[2].strip() if len(parts) > 2 else "",
-            "size": human_size(parts[3].strip()) if len(parts) > 3 else "",
+            "version": version,
+            "description": description,
+            "size": size,
             "explicit": True if explicit is None else name in explicit,
             "aur": name in foreign_names,
         })
     return packages
 
 
-def parse_dnf_search(text, term):
-    """Rows from a repoquery format of name, evr and summary, filtered by name."""
+def parse_apt_search(text, term):
+    """Rows from `name\\tversion\\tdescription`, kept when the name contains the term."""
     rows = []
     for line in text.splitlines():
         raw = line.strip()
         if not raw:
             continue
-        if "\t" in raw:
-            name, version, description = (raw.split("\t") + ["", ""])[:3]
-        else:
-            parts = raw.split()
-            if len(parts) < 2:
-                continue
-            name, version, description = parts[0], parts[1], " ".join(parts[2:])
+        name, version, description = (raw.split("\t", 2) + ["", ""])[:3]
         name = name.strip()
         if not name or term not in name.lower():
             continue
         rows.append({
             "name": name,
             "version": version.strip(),
-            "source": "fedora",
+            "source": "ubuntu",
             "installed": False,
             "description": description.strip(),
         })
     return rows
 
 
-def run(command):
+def run(command, timeout=60):
     try:
         return subprocess.run(command, capture_output=True, text=True,
-                              timeout=60, env=ENV)
+                              timeout=timeout, env=ENV)
     except (OSError, subprocess.TimeoutExpired) as error:
         print(f"{command[0]} failed: {error}", file=sys.stderr)
         return None
 
 
-def helper():
-    return next((name for name in HELPERS if shutil.which(name)), "")
+def literal_pattern(term):
+    return "".join("\\" + char if char in _PATTERN_META else char for char in term)
 
 
-def foreign():
-    """Names installed from outside the sync databases — the AUR, mostly."""
-    result = run(["pacman", "-Qqm"])
-    if result is None or result.returncode not in (0, 1):
+def rank(name, term):
+    """0 exact, 1 prefix, 2 anywhere in the name."""
+    folded = name.lower()
+    if folded == term:
+        return 0
+    return 1 if folded.startswith(term) else 2
+
+
+def lz4_library():
+    """liblz4, which apt uses to store the lists, or None."""
+    global _LZ4
+    if _LZ4 is False:
+        return None
+    if _LZ4 is not None:
+        return _LZ4
+    try:
+        import ctypes
+        lib = ctypes.CDLL("liblz4.so.1")
+        lib.LZ4F_createDecompressionContext.argtypes = [
+            ctypes.POINTER(ctypes.c_void_p), ctypes.c_uint]
+        lib.LZ4F_createDecompressionContext.restype = ctypes.c_size_t
+        lib.LZ4F_freeDecompressionContext.argtypes = [ctypes.c_void_p]
+        lib.LZ4F_freeDecompressionContext.restype = ctypes.c_size_t
+        lib.LZ4F_decompress.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t),
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t),
+            ctypes.c_void_p,
+        ]
+        lib.LZ4F_decompress.restype = ctypes.c_size_t
+        lib.LZ4F_isError.argtypes = [ctypes.c_size_t]
+        lib.LZ4F_isError.restype = ctypes.c_uint
+    except (OSError, AttributeError):
+        _LZ4 = False
+        return None
+    _LZ4 = (lib, ctypes)
+    return _LZ4
+
+
+def decompress_lz4(path):
+    """The bytes of an lz4 frame, or None when it cannot be read."""
+    loaded = lz4_library()
+    if loaded is None:
+        return None
+    lib, ctypes = loaded
+    try:
+        data = open(path, "rb").read()
+    except OSError:
+        return None
+    ctx = ctypes.c_void_p()
+    code = lib.LZ4F_createDecompressionContext(ctypes.byref(ctx), 100)
+    if lib.LZ4F_isError(code):
+        return None
+    out = bytearray()
+    try:
+        src = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
+        src_off = 0
+        dst = ctypes.create_string_buffer(1 << 20)
+        while src_off < len(data):
+            dst_size = ctypes.c_size_t(len(dst))
+            src_size = ctypes.c_size_t(len(data) - src_off)
+            hint = lib.LZ4F_decompress(
+                ctx, dst, ctypes.byref(dst_size),
+                ctypes.cast(ctypes.addressof(src) + src_off, ctypes.c_void_p),
+                ctypes.byref(src_size), None)
+            if lib.LZ4F_isError(hint):
+                return None
+            out += dst.raw[:dst_size.value]
+            consumed = src_size.value
+            if consumed == 0 and dst_size.value == 0:
+                break
+            src_off += consumed
+            if hint == 0:
+                break
+    finally:
+        lib.LZ4F_freeDecompressionContext(ctx)
+    return bytes(out)
+
+
+def names_in_list(path):
+    """Package names declared in one lists file."""
+    names = set()
+    if path.endswith(".lz4"):
+        blob = decompress_lz4(path)
+        if not blob:
+            return names
+        lines = (line.decode("utf-8", "replace") for line in blob.splitlines())
+    else:
+        try:
+            handle = open(path, encoding="utf-8", errors="replace")
+        except OSError:
+            return names
+        lines = handle
+    try:
+        for line in lines:
+            if not line.startswith("Package:"):
+                continue
+            name = line[8:].strip()
+            if name:
+                names.add(name)
+    finally:
+        if hasattr(lines, "close"):
+            lines.close()
+    return names
+
+
+def archive_names():
+    """Names published under ubuntu.com, or None when the lists directory is missing."""
+    if not os.path.isdir(LISTS):
+        return None
+    names = set()
+    try:
+        entries = list(os.scandir(LISTS))
+    except OSError:
+        return None
+    for entry in entries:
+        if "ubuntu.com" not in entry.name:
+            continue
+        try:
+            if not entry.is_file():
+                continue
+        except OSError:
+            continue
+        names.update(names_in_list(entry.path))
+    return names
+
+
+def foreign_names(installed_names):
+    """Installed names that no ubuntu.com list publishes.
+
+    A missing lists directory means nothing is marked foreign.
+    """
+    archive = archive_names()
+    if archive is None:
         return set()
-    return set(result.stdout.split())
+    return {name for name in installed_names if name not in archive}
+
+
+def without_summary(text):
+    """`name version size` becomes `name version <empty summary> size`."""
+    lines = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        name, sep, rest = line.partition("\t")
+        if not sep:
+            continue
+        version, sep2, size = rest.partition("\t")
+        lines.append(f"{name}\t{version}\t\t{size}" if sep2 else f"{name}\t{version}\t\t")
+    return "\n".join(lines)
+
+
+def explicit_names():
+    """Manual packages, or None when apt-mark did not answer."""
+    result = run(["apt-mark", "showmanual"])
+    if result is None or result.returncode != 0:
+        return None
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def installed_name_set():
+    result = run(["dpkg-query", "-W", "-f", r"${Package}\n"])
+    if result is None or result.returncode != 0:
+        return set()
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
 
 # ── INSTALLED ───────────────────────────────────────────────────────────────
 
 
-def dnf_installed():
-    result = run(["rpm", "-qa", "--qf", "%{NAME}\\t%{VERSION}-%{RELEASE}\\t%{SUMMARY}\\t%{SIZE}\\n"])
-    if result is None or result.returncode != 0:
-        print(json.dumps({"available": False, "manager": "dnf"}))
-        return
-    explicit = dnf_userinstalled()
-    print(json.dumps({
-        "available": True,
-        "manager": "dnf",
-        "helper": "",
-        "packages": parse_rpm_installed(result.stdout, explicit, dnf_foreign()),
-    }))
-
-
 def installed():
-    if manager() == "dnf":
-        dnf_installed()
-        return
-    result = run(["pacman", "-Qi"])
-    if result is None or result.returncode != 0:
-        print(json.dumps({"available": False}))
+    summary = r"${Package}\t${Version}\t${binary:Summary}\t${Installed-Size}\n"
+    result = run(["dpkg-query", "-W", "-f", summary])
+    text = None
+    if result is not None and result.returncode == 0:
+        text = result.stdout
+    else:
+        plain = r"${Package}\t${Version}\t${Installed-Size}\n"
+        result = run(["dpkg-query", "-W", "-f", plain])
+        if result is not None and result.returncode == 0:
+            text = without_summary(result.stdout)
+    if text is None:
+        print(json.dumps({"available": False, "manager": "apt"}))
         return
 
-    aur = foreign()
-    packages = []
-    entry = {}
-    field = ""
-    for line in result.stdout.splitlines() + [""]:
-        if not line.strip():
-            if entry.get("Name"):
-                packages.append({
-                    "name": entry["Name"],
-                    "version": entry.get("Version", ""),
-                    "description": entry.get("Description", ""),
-                    "size": entry.get("Installed Size", ""),
-                    "explicit": entry.get("Install Reason", "").startswith("Explicitly"),
-                    "aur": entry["Name"] in aur,
-                })
-            entry = {}
-            field = ""
-            continue
-        if line.startswith(" ") and field:
-            # A value that wraps continues on an indented line.
-            entry[field] = f"{entry[field]} {line.strip()}"
-            continue
-        key, _, value = line.partition(":")
-        field = key.strip()
-        entry[field] = value.strip()
-
+    names = [line.split("\t", 1)[0].strip()
+             for line in text.splitlines() if line.split("\t", 1)[0].strip()]
     print(json.dumps({
         "available": True,
-        "manager": "pacman",
-        "helper": helper(),
-        "packages": packages,
+        "manager": "apt",
+        "helper": "",
+        "packages": parse_apt_installed(text, explicit_names(), foreign_names(names)),
     }))
 
 
 # ── SEARCH ──────────────────────────────────────────────────────────────────
 
 
-def rank(name, term):
-    """0 exact, 1 prefix, 2 anywhere in the name."""
-    if name == term:
-        return 0
-    return 1 if name.startswith(term) else 2
+def search_names(text, term):
+    names = []
+    seen = set()
+    for line in text.splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        name = raw.split(" - ", 1)[0].strip()
+        folded = name.lower()
+        if not name or term not in folded or folded in seen:
+            continue
+        seen.add(folded)
+        names.append(name)
+    return names
 
 
-def repositories(term, into):
-    # `pacman -Ss` takes a regular expression and also matches descriptions,
-    # so the term is escaped and the results are filtered by name here.
-    result = run(["pacman", "-Ss", "--", re.escape(term)])
-    found = []
-    if result is not None and result.returncode == 0:
-        head = None
-        for line in result.stdout.splitlines():
-            if not line.startswith(" "):
-                # extra/firefox 142.0-1 (group) [installed: 141.0-1]
-                parts = line.split(" ")
-                repo, _, name = parts[0].partition("/")
-                head = {
-                    "name": name,
-                    "version": parts[1] if len(parts) > 1 else "",
-                    "source": repo,
-                    "installed": "[installed" in line,
-                    "description": "",
-                }
-                found.append(head)
-            elif head is not None:
-                head["description"] = line.strip()
-    into["repos"] = [row for row in found if term in row["name"].lower()]
+def parse_show(text):
+    """Version and the first description line, keyed by package name."""
+    details = {}
+    current = None
+    for line in text.splitlines():
+        if not line.strip():
+            current = None
+            continue
+        if line[:1].isspace():
+            continue
+        key, sep, value = line.partition(":")
+        if not sep:
+            continue
+        key = key.strip()
+        value = value.strip()
+        if key == "Package":
+            current = value
+            details.setdefault(current, {})
+            continue
+        if current is None:
+            continue
+        slot = details[current]
+        if key == "Version" and "version" not in slot:
+            slot["version"] = value
+        elif key == "Description-en":
+            slot["description"] = value
+        elif key == "Description" and "description" not in slot:
+            slot["description"] = value
+    return details
 
 
-def fetch(url):
-    request = urllib.request.Request(url, headers={"User-Agent": "impasto"})
-    with urllib.request.urlopen(request, timeout=AUR_TIMEOUT) as response:
-        return json.load(response)
-
-
-def aur(term, into):
-    quoted = urllib.parse.quote(term, safe="")
-    try:
-        answer = fetch(f"{AUR_RPC}/search/{quoted}?by=name")
-        prefix = False
-        if answer.get("type") == "error":
-            # Too many results: ask for the names that START with it, which
-            # the RPC answers in order, and then for their details.
-            names = fetch(f"{AUR_RPC}/suggest/{quoted}")
-            prefix = True
-            if not names:
-                into["aur"] = []
-                into["aurNote"] = "prefix"
-                return
-            query = urllib.parse.urlencode([("arg[]", name) for name in names])
-            answer = fetch(f"{AUR_RPC}/info?{query}")
-    except (OSError, ValueError) as error:
-        print(f"The AUR did not answer: {error}", file=sys.stderr)
-        into["aur"] = None
-        return
-
-    mine = foreign()
-    into["aur"] = [{
-        "name": row.get("Name", ""),
-        "version": row.get("Version", ""),
-        "source": "aur",
-        "installed": row.get("Name", "") in mine,
-        "description": row.get("Description") or "",
-        "votes": row.get("NumVotes", 0),
-        "popularity": row.get("Popularity", 0),
-        "outOfDate": row.get("OutOfDate") is not None,
-    } for row in answer.get("results", [])]
-    into["aurNote"] = "prefix" if prefix else ""
-
-
-def dnf_installed_names():
-    result = run(["rpm", "-qa", "--qf", "%{NAME}\\n"])
-    if result is None or result.returncode != 0:
-        return set()
-    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
-
-
-def search_dnf(term):
-    term = term.strip().lower()
-    if len(term) < 2:
-        print(json.dumps({"term": term, "results": [], "aur": "short", "manager": "dnf"}))
-        return
-    text = dnf_text([
-        ["dnf", "repoquery", "--available", "--format", "%{name}\t%{evr}\t%{summary}", f"*{term}*"],
-        ["dnf", "repoquery", "--available", "--qf", "%{name} %{evr} %{summary}", f"*{term}*"],
-    ])
-    if text is None:
-        print("dnf did not answer", file=sys.stderr)
-        print(json.dumps({
-            "term": term, "results": [], "total": 0, "repos": 0,
-            "aurCount": 0, "aur": "offline", "manager": "dnf",
-        }))
-        return
-    mine = dnf_installed_names()
-    rows = parse_dnf_search(text, term)
-    for row in rows:
-        row["installed"] = row["name"] in mine
-    rows.sort(key=lambda row: (rank(row["name"], term), row["name"]))
+def offline(term):
     print(json.dumps({
         "term": term,
-        "results": rows[:LISTED],
-        "total": len(rows),
-        "repos": len(rows),
+        "results": [],
+        "total": 0,
+        "repos": 0,
         "aurCount": 0,
-        "aur": "off",
-        "manager": "dnf",
+        "aur": "offline",
+        "manager": "apt",
     }))
 
 
 def search(term):
-    if manager() == "dnf":
-        search_dnf(term)
-        return
     term = term.strip().lower()
     if len(term) < 2:
-        # The RPC rejects single-character terms.
-        print(json.dumps({"term": term, "results": [], "aur": "short"}))
+        print(json.dumps({
+            "term": term,
+            "results": [],
+            "total": 0,
+            "repos": 0,
+            "aurCount": 0,
+            "aur": "short",
+            "manager": "apt",
+        }))
         return
 
-    found = {}
-    threads = [threading.Thread(target=repositories, args=(term, found)),
-               threading.Thread(target=aur, args=(term, found))]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    result = run(["apt-cache", "search", "--names-only", "--", literal_pattern(term)])
+    if result is None or result.returncode != 0:
+        if result is not None:
+            print("apt-cache did not answer", file=sys.stderr)
+        offline(term)
+        return
 
-    repos = found.get("repos", [])
-    remote = found.get("aur")
-    # A name in both is the repository's: that is the one pacman installs.
-    taken = {row["name"] for row in repos}
-    remote_rows = [row for row in (remote or []) if row["name"] not in taken]
+    names = search_names(result.stdout, term)
+    names.sort(key=lambda name: (rank(name, term), name))
+    shown = names[:LISTED]
+    details = {}
+    if shown:
+        shown_result = run(["apt-cache", "show", "--no-all-versions", *shown])
+        if shown_result is not None and shown_result.stdout:
+            details = parse_show(shown_result.stdout)
 
-    # Match quality first, whichever the source, so `hyprland` ranks above
-    # repository packages that merely contain it. Within a tier the
-    # repositories lead, and AUR results follow by popularity.
-    rows = sorted(repos + remote_rows, key=lambda row: (
-        rank(row["name"], term),
-        row["source"] == "aur",
-        -row.get("popularity", 0),
-        row["name"],
-    ))
+    lines = []
+    for name in shown:
+        info = details.get(name, {})
+        description = info.get("description", "").replace("\t", " ")
+        lines.append(f"{name}\t{info.get('version', '')}\t{description}")
+    rows = parse_apt_search("\n".join(lines), term)
+    mine = installed_name_set()
+    for row in rows:
+        row["installed"] = row["name"] in mine
+    rows.sort(key=lambda row: (rank(row["name"], term), row["name"]))
 
     print(json.dumps({
         "term": term,
-        "results": rows[:LISTED],
-        "total": len(rows),
-        "repos": len(repos),
-        "aurCount": len(remote_rows),
-        "aur": "offline" if remote is None else (found.get("aurNote") or "ok"),
-        "manager": "pacman",
+        "results": rows,
+        "total": len(names),
+        "repos": len(names),
+        "aurCount": 0,
+        "aur": "off",
+        "manager": "apt",
     }))
 
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Plans for Arch and Fedora, with the package tools replaced by stubs.
+# Plans for Ubuntu, with the package tools replaced by stubs.
 # Nothing is installed. A fake os-release selects the distro.
 set -euo pipefail
 
@@ -9,39 +9,27 @@ trap 'rm -rf "$work"' EXIT
 
 mkdir -p "$work/bin" "$work/home" "$work/state" "$work/os" "$work/root"
 
-cat > "$work/bin/dnf" <<'EOF'
+cat > "$work/bin/apt-get" <<'EOF'
 #!/bin/bash
 printf '%s\n' "$*" >> "${IMPASTO_LOG:?}"
 exit 0
 EOF
-cat > "$work/bin/timeout" <<'EOF'
-#!/bin/bash
-# Drop timeout's own flags so the stub PATH still reaches the dnf stub.
-while [[ ${1:-} == -* ]]; do
-    [[ $1 == -- ]] && { shift; break; }
-    [[ $1 == --foreground ]] && { shift; continue; }
-    shift
-done
-[[ ${1:-} =~ ^[0-9]+([.][0-9]+)?$ ]] && shift
-exec "$@"
-EOF
-cat > "$work/bin/rpm" <<'EOF'
+cat > "$work/bin/apt-cache" <<'EOF'
 #!/bin/bash
 printf '%s\n' "$*" >> "${IMPASTO_LOG:?}"
-# A Fedora machine that already has RPM Fusion ffmpeg and tuned-ppd.
-if [[ ${1:-} == -q && ${2:-} == ffmpeg ]]; then exit 0; fi
-if [[ ${1:-} == -q && ${2:-} == tuned-ppd ]]; then exit 0; fi
-if [[ ${1:-} == -q && ${2:-} == --whatprovides && ${3:-} == ffmpeg-free ]]; then exit 0; fi
-if [[ ${1:-} == -q && ${2:-} == --whatprovides && ${3:-} == ppd-service ]]; then exit 0; fi
+if [[ ${1:-} == policy ]]; then
+    printf 'Candidate: (none)\n'
+fi
+exit 0
+EOF
+cat > "$work/bin/dpkg-query" <<'EOF'
+#!/bin/bash
+printf '%s\n' "$*" >> "${IMPASTO_LOG:?}"
 exit 1
 EOF
-cat > "$work/bin/pacman" <<'EOF'
+cat > "$work/bin/add-apt-repository" <<'EOF'
 #!/bin/bash
 printf '%s\n' "$*" >> "${IMPASTO_LOG:?}"
-if [[ ${1:-} == -T ]]; then
-    shift
-    printf '%s\n' "$@"
-fi
 exit 0
 EOF
 cat > "$work/bin/hyprland" <<'EOF'
@@ -56,25 +44,31 @@ cat > "$work/bin/plymouth-set-default-theme" <<'EOF'
 printf 'bgrt\n'
 exit 0
 EOF
-cat > "$work/bin/dracut" <<'EOF'
+cat > "$work/bin/update-initramfs" <<'EOF'
 #!/bin/bash
 exit 0
 EOF
-cat > "$work/bin/mkinitcpio" <<'EOF'
+cat > "$work/bin/update-grub" <<'EOF'
 #!/bin/bash
 exit 0
 EOF
 chmod 755 "$work/bin/"*
 
-cat > "$work/os/fedora" <<'EOF'
-NAME="Fedora Linux"
-ID=fedora
-VERSION_ID=43
+cat > "$work/os/ubuntu" <<'EOF'
+NAME="Ubuntu"
+ID=ubuntu
+ID_LIKE=debian
+VERSION_ID=24.04
 EOF
 cat > "$work/os/arch" <<'EOF'
 NAME="Arch Linux"
 ID=arch
 ID_LIKE=archlinux
+EOF
+cat > "$work/os/fedora" <<'EOF'
+NAME="Fedora Linux"
+ID=fedora
+VERSION_ID=43
 EOF
 cat > "$work/os/debian" <<'EOF'
 NAME="Debian GNU/Linux"
@@ -83,10 +77,9 @@ ID_LIKE=debian
 EOF
 
 theme="$work/root/usr/share/plymouth/themes/impasto"
-mkdir -p "$theme" "$work/root/etc/dracut.conf.d" "$work/root/etc/mkinitcpio.conf.d"
+mkdir -p "$theme" "$work/root/etc/default/grub.d"
 printf 'theme\n' > "$theme/impasto.plymouth"
-printf 'plymouth\n' > "$work/root/etc/dracut.conf.d/impasto.conf"
-printf 'plymouth\n' > "$work/root/etc/mkinitcpio.conf.d/impasto.conf"
+printf 'splash\n' > "$work/root/etc/default/grub.d/impasto.cfg"
 
 run_setup() {
     local release=$1
@@ -104,78 +97,52 @@ run_setup() {
         "$root/setup" "$@"
 }
 
-echo "arch plans pacman"
-arch_out=$(run_setup arch packages --dry-run --noconfirm)
-grep -q 'pacman' <<<"$arch_out"
-grep -q 'aur' <<<"$arch_out"
-if grep -q 'fedora extras' <<<"$arch_out"; then
-    echo "arch took the Fedora package path" >&2
+echo "ubuntu plans apt and keeps hyprland 0.56"
+ubuntu_out=$(run_setup ubuntu packages --dry-run --noconfirm)
+grep -q '── apt' <<<"$ubuntu_out"
+grep -q 'kept     hyprland 0.56.1' <<<"$ubuntu_out"
+grep -q 'would build quickshell from source into /usr/local' <<<"$ubuntu_out"
+grep -q 'would enable ppa:cppiber/hyprland' <<<"$ubuntu_out"
+if grep -q 'for: hyprland ' <<<"$ubuntu_out" || grep -q 'for: hyprland$' <<<"$ubuntu_out"; then
+    echo "ubuntu offered the PPA a new enough hyprland" >&2
     exit 1
 fi
-if grep -q '^install ' "$work/log"; then
-    echo "dry-run invoked an installer" >&2
-    exit 1
-fi
-
-echo "fedora plans dnf and keeps hyprland 0.56"
-fedora_out=$(run_setup fedora packages --dry-run --noconfirm)
-grep -q 'kept     hyprland 0.56.1' <<<"$fedora_out"
-grep -q 'would build quickshell' <<<"$fedora_out"
-grep -q 'would try COPR' <<<"$fedora_out"
-if grep -E 'missing:.*ffmpeg-free|missing:.*power-profiles-daemon' <<<"$fedora_out"; then
-    echo "fedora asked for packages already provided by ffmpeg or tuned-ppd" >&2
-    exit 1
-fi
-if grep -q '── pacman' <<<"$fedora_out"; then
-    echo "fedora took the pacman path" >&2
-    exit 1
-fi
-if grep -E '(^| )install( |$)' "$work/log" | grep -q .; then
-    echo "dry-run invoked dnf install" >&2
+if grep -q 'install -y' "$work/log"; then
+    echo "dry-run invoked apt-get install" >&2
     cat "$work/log" >&2
     exit 1
 fi
-if grep -q 'for: hyprland ' <<<"$fedora_out" || grep -q 'for: hyprland$' <<<"$fedora_out"; then
-    echo "fedora offered to replace a new enough hyprland" >&2
-    exit 1
-fi
 
-echo "fedora leaves an older hyprland installed"
-old_out=$(IMPASTO_HYPRLAND_VERSION=0.51.0 run_setup fedora packages --dry-run --noconfirm)
+echo "ubuntu leaves an older hyprland installed"
+old_out=$(IMPASTO_HYPRLAND_VERSION=0.51.0 run_setup ubuntu packages --dry-run --noconfirm)
 grep -q 'left     hyprland 0.51.0' <<<"$old_out"
 if grep -q 'would install hyprland' <<<"$old_out"; then
-    echo "fedora offered to replace an older hyprland" >&2
+    echo "ubuntu offered to replace an older hyprland" >&2
     exit 1
 fi
 
-echo "an unknown distro is refused"
-if run_setup debian packages --dry-run --noconfirm >"$work/debian.out" 2>"$work/debian.err"; then
-    echo "debian was accepted" >&2
-    exit 1
-fi
-grep -q 'Arch Linux and Fedora' "$work/debian.err"
+echo "arch, fedora and debian are refused"
+for release in arch fedora debian; do
+    if run_setup "$release" packages --dry-run --noconfirm >"$work/refused.out" 2>"$work/refused.err"; then
+        echo "$release was accepted" >&2
+        exit 1
+    fi
+    grep -q 'impasto installs on Ubuntu' "$work/refused.err"
+done
 
-echo "fedora splash uses dracut"
-splash_out=$(run_setup fedora splash --dry-run --noconfirm)
-grep -q 'initramfs with dracut' <<<"$splash_out"
-if grep -q 'mkinitcpio' <<<"$splash_out"; then
-    echo "fedora splash mentioned mkinitcpio" >&2
-    exit 1
-fi
-
-echo "fedora system files skip mkinitcpio"
-system_out=$(run_setup fedora system --dry-run --noconfirm)
-grep -q 'etc/dracut.conf.d/impasto.conf' <<<"$system_out"
-if grep -q 'mkinitcpio' <<<"$system_out"; then
-    echo "fedora deploy copied mkinitcpio" >&2
+echo "ubuntu splash uses update-initramfs"
+splash_out=$(run_setup ubuntu splash --dry-run --noconfirm)
+grep -q 'initramfs with update-initramfs' <<<"$splash_out"
+if grep -q 'mkinitcpio\|dracut' <<<"$splash_out"; then
+    echo "ubuntu splash mentioned another initramfs tool" >&2
     exit 1
 fi
 
-echo "arch system files skip dracut"
-arch_system=$(run_setup arch system --dry-run --noconfirm)
-grep -q 'etc/mkinitcpio.conf.d/impasto.conf' <<<"$arch_system"
-if grep -q 'dracut.conf' <<<"$arch_system"; then
-    echo "arch deploy copied the dracut drop-in" >&2
+echo "ubuntu system files copy the grub drop-in"
+system_out=$(run_setup ubuntu system --dry-run --noconfirm)
+grep -q 'etc/default/grub.d/impasto.cfg' <<<"$system_out"
+if grep -q 'mkinitcpio\|dracut' <<<"$system_out"; then
+    echo "ubuntu deploy copied an initramfs drop-in this fork does not ship" >&2
     exit 1
 fi
 
