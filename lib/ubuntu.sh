@@ -254,6 +254,9 @@ ubuntu_hyprland() {
 ubuntu_hyprland_after() {
     local ver
     (( HYPRLAND_KEEP )) && return 0
+    # A dry run already said it would ask the PPA. Nothing has been installed,
+    # so the version check below would only report a skip that has not happened.
+    if (( DRY )); then return 0; fi
     ver=$(hyprland_version || true)
     if [[ -z $ver ]]; then
         say 'skipped  hyprland — no Ubuntu build of 0.56 or newer could be installed'
